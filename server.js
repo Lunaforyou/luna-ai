@@ -127,5 +127,5 @@ app.get("/api/admin/stats",(req,res)=>{
  res.json({users,plans,messages});
 });
 
-app.get("*",(req,res)=>res.sendFile(path.join(__dirname,"public/index.html")));
+app.use((req,res)=>res.sendFile(path.join(__dirname,"public/index.html")));
 app.listen(process.env.PORT||3000,()=>console.log("Luna Platform hazır."));
