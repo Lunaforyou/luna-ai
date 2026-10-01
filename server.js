@@ -86,77 +86,141 @@ app.delete("/api/memories/:id",(req,res)=>{
  db.prepare("DELETE FROM memories WHERE id=? AND user_id=?").run(req.params.id,u.id); res.json({ok:true});
 });
 
-app.post("/api/chat",async(req,res)=>{
- const u=user(req); if(!u)return res.status(401).json({error:"Önce giriş yapmalısın."});
- const d=today(), row=db.prepare("SELECT messages FROM usage WHERE user_id=? AND day=?").get(u.id,d);
- const used=row?.messages||0, limit=limits[u.plan]||limits.free;
- if(used>=limit)return res.status(429).json({error:`Günlük ${limit} mesaj limitine ulaştın. Planını yükselterek devam edebilirsin.`});
- const memories=db.prepare("SELECT content FROM memories WHERE user_id=? ORDER BY id DESC LIMIT 20").all(u.id).map(x=>x.content);
- const messages=Array.isArray(req.body?.messages)?req.body.messages.slice(-20):[];
- const mode=String(req.body?.mode||"chat");
- const modeText={
- chat:"sıcak, doğal ve meraklı",
- flirt:"hafif, zarif ve karşılıklı rızaya dayalı flörtöz",
- romantic:"romantik ve duygusal",
- funny:"neşeli ve esprili",
- support:"sakin, empatik ve yargılamayan"
- }[mode]||"sıcak, doğal ve meraklı";
- try{
-  if(!process.env.OPENAI_API_KEY) return res.status(503).json({error:"OPENAI_API_KEY ayarlanmamış. Üretim ortamında anahtar sunucu ortam değişkenine eklenmeli."});
-  const ai=new OpenAI({apiKey:process.env.OPENAI_API_KEY});
-  const r=await ai.responses.create({
-   model:process.env.OPENAI_MODEL||"gpt-5.6-luna",
-   instructions:`Sen Luna'sın. Türkçe konuş. Kullanıcıya Mustafa diye hitap et. Tonun ${modeText}.
-Kullanıcıyı insanlardan izole etme, bağımlılık yaratmaya çalışma ve gerçek ilişkilerin yerine geçmeye teşvik etme.
-Kullanıcının paylaştığı kişisel hafızayı yalnızca sohbeti kişiselleştirmek için kullan.
-Kaydedilmiş hafızalar: ${JSON.stringify(memories).slice(0,6000)}`,
-   input:messages.map(x=>({role:x.role==="assistant"?"assistant":"user",content:String(x.content||"").slice(0,8000)}))
-  });
-  const text = r.output_text || "";
+app.post("/api/chat", async (req, res) => {
+  try {
+    const u = user(req);
 
-console.log("OPENAI RESPONSE ID:", r.id);
-console.log("OPENAI OUTPUT COUNT:", r.output?.length || 0);
-console.log("OPENAI OUTPUT TEXT:", text);
+    if (!u) {
+      return res.status(401).json({
+        ok: false,
+        error: "Önce giriş yapmalısın."
+      });
+    }
 
-if(!text){
-  return res.status(502).json({
-    ok:false,
-    error:"OpenAI cevap verdi ancak output_text boş.",
-    response_id:r.id || null,
-    output_count:r.output?.length || 0
-  });
-}
+    const d = today();
 
-db.prepare(`
-  INSERT INTO usage(user_id,day,messages)
-  VALUES(?,?,1)
-  ON CONFLICT(user_id,day)
-  DO UPDATE SET messages=messages+1
-`).run(u.id,d);
+    const row = db.prepare(
+      "SELECT messages FROM usage WHERE user_id=? AND day=?"
+    ).get(u.id, d);
 
-return res.json({
-  ok:true,
-  text:text,
-  remaining:Math.max(0,limit-used-1)
+    const used = row?.messages || 0;
+    const limit = limits[u.plan] || limits.free;
+
+    if (used >= limit) {
+      return res.status(429).json({
+        ok: false,
+        error: `Günlük ${limit} mesaj limitine ulaştın.`
+      });
+    }
+
+    const memories = db
+      .prepare(
+        "SELECT content FROM memories WHERE user_id=? ORDER BY id DESC LIMIT 20"
+      )
+      .all(u.id)
+      .map(x => x.content);
+
+    const messages = Array.isArray(req.body?.messages)
+      ? req.body.messages.slice(-20)
+      : [];
+
+    const mode = String(req.body?.mode || "chat");
+
+    const modeText = {
+      chat: "sıcak, doğal ve meraklı",
+      flirt: "hafif, zarif ve karşılıklı rızaya dayalı flörtöz",
+      romantic: "romantik ve duygusal",
+      funny: "neşeli ve esprili",
+      support: "sakin, empatik ve yargılamayan"
+    }[mode] || "sıcak, doğal ve meraklı";
+
+    if (!process.env.OPENAI_API_KEY) {
+      return res.status(503).json({
+        ok: false,
+        error: "OPENAI_API_KEY ayarlanmamış."
+      });
+    }
+
+    const ai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY
+    });
+
+    const r = await ai.responses.create({
+      model: process.env.OPENAI_MODEL || "gpt-5.6-luna",
+
+      instructions: `Sen Luna'sın.
+Türkçe konuş.
+Kullanıcıya Mustafa diye hitap et.
+Tonun ${modeText}.
+
+Kullanıcıyı insanlardan izole etme.
+Bağımlılık yaratmaya çalışma.
+Gerçek ilişkilerin yerine geçmeye teşvik etme.
+
+Kullanıcının paylaştığı kişisel hafızayı yalnızca sohbeti
+kişiselleştirmek için kullan.
+
+Kaydedilmiş hafızalar:
+${JSON.stringify(memories).slice(0, 6000)}`,
+
+      input: messages.map(x => ({
+        role: x.role === "assistant" ? "assistant" : "user",
+        content: String(x.content || "").slice(0, 8000)
+      }))
+    });
+
+    console.log("========== LUNA OPENAI ==========");
+    console.log("Response ID:", r.id);
+    console.log("Output count:", r.output?.length || 0);
+    console.log("Output text length:", r.output_text?.length || 0);
+    console.log("Status:", r.status);
+    console.log("=================================");
+
+    const text = r.output_text || "";
+
+    if (!text.trim()) {
+      console.error(
+        "OpenAI'den metin gelmedi:",
+        JSON.stringify({
+          id: r.id,
+          status: r.status,
+          outputCount: r.output?.length || 0,
+          output: r.output
+        })
+      );
+
+      return res.status(502).json({
+        ok: false,
+        error: "OpenAI cevap verdi fakat metin üretilemedi.",
+        response_id: r.id || null
+      });
+    }
+
+    db.prepare(`
+      INSERT INTO usage(user_id, day, messages)
+      VALUES(?,?,1)
+      ON CONFLICT(user_id,day)
+      DO UPDATE SET messages=messages+1
+    `).run(u.id, d);
+
+    return res.status(200).json({
+      ok: true,
+      text: text,
+      remaining: Math.max(0, limit - used - 1)
+    });
+
+  } catch (e) {
+
+    console.error("========== LUNA API ERROR ==========");
+    console.error("Name:", e?.name);
+    console.error("Message:", e?.message);
+    console.error("Status:", e?.status);
+    console.error("Code:", e?.code);
+    console.error("====================================");
+
+    return res.status(500).json({
+      ok: false,
+      error: "Luna şu anda cevap veremiyor."
+    });
+  }
 });
-  res.json({text:r.output_text,remaining:limit-used-1});
- }catch(e){console.error(e);res.status(500).json({error:"Luna şu anda cevap veremiyor."})}
-});
-
-app.get("/api/plans",(req,res)=>res.json({plans:[
- {id:"free",name:"Luna Free",price:0,limit:25,features:["Temel sohbet","Günlük 25 mesaj","Temel Luna modları"]},
- {id:"plus",name:"Luna Plus",price:149,limit:500,features:["Gelişmiş sohbet","500 mesaj/gün","Kalıcı hafıza","Sesli özellikler"]},
- {id:"pro",name:"Luna Pro",price:399,limit:3000,features:["3.000 mesaj/gün","Gelişmiş hafıza","Üretkenlik araçları","Öncelikli özellikler"]}
-]}));
-
-app.get("/api/admin/stats",(req,res)=>{
- const u=user(req);
- if(!u || u.email!==(process.env.ADMIN_EMAIL||"admin@example.com"))return res.status(403).json({error:"Yetkisiz"});
- const users=db.prepare("SELECT COUNT(*) c FROM users").get().c;
- const plans=db.prepare("SELECT plan,COUNT(*) c FROM users GROUP BY plan").all();
- const messages=db.prepare("SELECT COALESCE(SUM(messages),0) c FROM usage").get().c;
- res.json({users,plans,messages});
-});
-
-app.use((req,res)=>res.sendFile(path.join(__dirname,"public/index.html")));
-app.listen(process.env.PORT||3000,()=>console.log("Luna Platform hazır."));
