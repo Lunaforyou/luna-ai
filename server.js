@@ -2,7 +2,6 @@ import express from "express";
 import cookieSession from "cookie-session";
 import bcrypt from "bcryptjs";
 import Database from "better-sqlite3";
-import OpenAI from "openai";
 import path from "path";
 import {fileURLToPath} from "url";
 import fs from "fs";
@@ -62,10 +61,183 @@ app.post("/api/register",async(req,res)=>{
  }catch(e){res.status(409).json({error:"Bu e-posta zaten kayıtlı olabilir."})}
 });
 
-app.post("/api/login",async(req,res)=>{
- const u=db.prepare("SELECT * FROM users WHERE email=?").get(String(req.body?.email||"").trim().toLowerCase());
- if(!u||!(await bcrypt.compare(String(req.body?.password||""),u.password_hash)))return res.status(401).json({error:"E-posta veya şifre hatalı."});
- req.session.userId=u.id; res.json({ok:true,user:user(req)});
+app.post("/api/chat", async (req, res) => {
+  try {
+    const u = user(req);
+
+    if (!u) {
+      return res.status(401).json({
+        ok: false,
+        error: "Önce giriş yapmalısın."
+      });
+    }
+
+    const d = today();
+
+    const row = db.prepare(
+      "SELECT messages FROM usage WHERE user_id=? AND day=?"
+    ).get(u.id, d);
+
+    const used = row?.messages || 0;
+    const limit = limits[u.plan] || limits.free;
+
+    if (used >= limit) {
+      return res.status(429).json({
+        ok: false,
+        error: `Günlük ${limit} mesaj limitine ulaştın.`
+      });
+    }
+
+    const memories = db
+      .prepare(
+        "SELECT content FROM memories WHERE user_id=? ORDER BY id DESC LIMIT 20"
+      )
+      .all(u.id)
+      .map(x => x.content);
+
+    const messages = Array.isArray(req.body?.messages)
+      ? req.body.messages.slice(-20)
+      : [];
+
+    const mode = String(req.body?.mode || "chat");
+
+    const modeText = {
+      chat: "sıcak, doğal ve meraklı",
+      flirt: "hafif, zarif ve karşılıklı rızaya dayalı flörtöz",
+      romantic: "romantik ve duygusal",
+      funny: "neşeli ve esprili",
+      support: "sakin, empatik ve yargılamayan"
+    }[mode] || "sıcak, doğal ve meraklı";
+
+    if (!process.env.GEMINI_API_KEY) {
+      return res.status(503).json({
+        ok: false,
+        error: "GEMINI_API_KEY ayarlanmamış."
+      });
+    }
+
+    const systemInstruction = `
+Sen Luna'sın.
+
+Türkçe konuş.
+
+Kullanıcıya Mustafa diye hitap et.
+
+Tonun:
+${modeText}.
+
+Kullanıcıyı insanlardan izole etme.
+Bağımlılık yaratmaya çalışma.
+Gerçek ilişkilerin yerine geçmeye teşvik etme.
+
+Kullanıcının paylaştığı kişisel hafızayı yalnızca
+sohbeti kişiselleştirmek için kullan.
+
+Kaydedilmiş hafızalar:
+${JSON.stringify(memories).slice(0, 6000)}
+`;
+
+    const contents = messages.map(x => ({
+      role: x.role === "assistant" ? "model" : "user",
+      parts: [
+        {
+          text: String(x.content || "").slice(0, 8000)
+        }
+      ]
+    }));
+
+    if (contents.length === 0) {
+      return res.status(400).json({
+        ok: false,
+        error: "Mesaj bulunamadı."
+      });
+    }
+
+    const response = await fetch(
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" +
+      encodeURIComponent(process.env.GEMINI_API_KEY),
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          systemInstruction: {
+            parts: [
+              {
+                text: systemInstruction
+              }
+            ]
+          },
+          contents
+        })
+      }
+    );
+
+    const data = await response.json();
+
+    console.log("========== LUNA GEMINI ==========");
+    console.log("HTTP Status:", response.status);
+    console.log("Model:", "gemini-2.5-flash");
+    console.log("=================================");
+
+    if (!response.ok) {
+      console.error(
+        "Gemini API Error:",
+        JSON.stringify(data, null, 2)
+      );
+
+      return res.status(502).json({
+        ok: false,
+        error: "Luna AI servisine bağlanamadı."
+      });
+    }
+
+    const text =
+      data?.candidates?.[0]?.content?.parts
+        ?.map(part => part.text || "")
+        .join("")
+        .trim() || "";
+
+    if (!text) {
+      console.error(
+        "Gemini'den metin gelmedi:",
+        JSON.stringify(data, null, 2)
+      );
+
+      return res.status(502).json({
+        ok: false,
+        error: "Luna cevap üretemedi."
+      });
+    }
+
+    db.prepare(`
+      INSERT INTO usage(user_id, day, messages)
+      VALUES(?,?,1)
+      ON CONFLICT(user_id,day)
+      DO UPDATE SET messages=messages+1
+    `).run(u.id, d);
+
+    return res.status(200).json({
+      ok: true,
+      text,
+      remaining: Math.max(0, limit - used - 1)
+    });
+
+  } catch (e) {
+
+    console.error("========== LUNA API ERROR ==========");
+    console.error("Name:", e?.name);
+    console.error("Message:", e?.message);
+    console.error("Status:", e?.status);
+    console.error("Code:", e?.code);
+    console.error("====================================");
+
+    return res.status(500).json({
+      ok: false,
+      error: "Luna şu anda cevap veremiyor."
+    });
+  }
 });
 app.post("/api/logout",(req,res)=>{req.session=null;res.json({ok:true})});
 app.get("/api/me",(req,res)=>res.json({user:user(req)}));
