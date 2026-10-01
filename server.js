@@ -112,7 +112,33 @@ Kullanıcının paylaştığı kişisel hafızayı yalnızca sohbeti kişiselle�
 Kaydedilmiş hafızalar: ${JSON.stringify(memories).slice(0,6000)}`,
    input:messages.map(x=>({role:x.role==="assistant"?"assistant":"user",content:String(x.content||"").slice(0,8000)}))
   });
-  db.prepare("INSERT INTO usage(user_id,day,messages) VALUES(?,?,1) ON CONFLICT(user_id,day) DO UPDATE SET messages=messages+1").run(u.id,d);
+  const text = r.output_text || "";
+
+console.log("OPENAI RESPONSE ID:", r.id);
+console.log("OPENAI OUTPUT COUNT:", r.output?.length || 0);
+console.log("OPENAI OUTPUT TEXT:", text);
+
+if(!text){
+  return res.status(502).json({
+    ok:false,
+    error:"OpenAI cevap verdi ancak output_text boş.",
+    response_id:r.id || null,
+    output_count:r.output?.length || 0
+  });
+}
+
+db.prepare(`
+  INSERT INTO usage(user_id,day,messages)
+  VALUES(?,?,1)
+  ON CONFLICT(user_id,day)
+  DO UPDATE SET messages=messages+1
+`).run(u.id,d);
+
+return res.json({
+  ok:true,
+  text:text,
+  remaining:Math.max(0,limit-used-1)
+});
   res.json({text:r.output_text,remaining:limit-used-1});
  }catch(e){console.error(e);res.status(500).json({error:"Luna şu anda cevap veremiyor."})}
 });
