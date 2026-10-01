@@ -35,12 +35,16 @@ CREATE TABLE IF NOT EXISTS usage(
 );
 `);
 app.use(express.json({limit:"1mb"}));
+app.set("trust proxy", 1);
+
 app.use(cookieSession({
- name:"luna_session",
- secret:process.env.SESSION_SECRET||"dev-only-change-me",
- httpOnly:true,
- sameSite:"lax",
- secure:process.env.NODE_ENV==="production"
+ name: "luna_session",
+ keys: [process.env.SESSION_SECRET || "dev-only-change-me"],
+ httpOnly: true,
+ sameSite: "lax",
+ secure: true,
+ maxAge: 1000 * 60 * 60 * 24 * 30
+}));
 }));
 app.use(express.static(path.join(__dirname,"public")));
 
