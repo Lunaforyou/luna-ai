@@ -13,7 +13,30 @@
 let user=null,loginMode=true,mode="chat",history=[];
 const $=id=>document.getElementById(id);
 document.querySelectorAll(".mode").forEach(b=>b.onclick=()=>{document.querySelectorAll(".mode").forEach(x=>x.classList.remove("active"));b.classList.add("active");mode=b.dataset.mode});
-async function boot(){let r=await fetch("/api/me");let j=await r.json();if(j.user)setUser(j.user);loadPlans()}
+async function boot(){
+  try{
+    const r=await fetch("/api/me",{
+      method:"GET",
+      credentials:"include",
+      cache:"no-store"
+    });
+
+    if(r.ok){
+      const data=await r.json();
+
+      if(data && data.user){
+        setUser(data.user);
+      }else{
+        setUser(data);
+      }
+    }else{
+      setUser(null);
+    }
+  }catch(e){
+    console.error("Luna oturum kontrolü:",e);
+    setUser(null);
+  }
+}
 function setUser(u){user=u;$("who").textContent=u.name+" • "+u.plan.toUpperCase();$("authBtn").classList.add("hidden");$("accountBtn").classList.remove("hidden")}
 async function loadPlans(){let j=await (await fetch("/api/plans")).json();$("plans").innerHTML=j.plans.map(p=>`<div class="plan"><b>${p.name}</b><div class="price">${p.price?("₺"+p.price+"/ay"):"Ücretsiz"}</div><div class="small">${p.features.join(" • ")}</div></div>`).join("")}
 function auth(){hideAll();$("auth").style.display="block"}
