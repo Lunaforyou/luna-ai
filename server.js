@@ -45,7 +45,6 @@ app.use(cookieSession({
  secure: true,
  maxAge: 1000 * 60 * 60 * 24 * 30
 }));
-}));
 app.use(express.static(path.join(__dirname,"public")));
 
 const today=()=>new Date().toISOString().slice(0,10);
