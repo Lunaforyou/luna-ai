@@ -45,7 +45,70 @@ async function submitAuth(){let body={email:$("email").value,password:$("passwor
 function hideAll(){["home","chat","auth","account"].forEach(x=>$(x).style.display="none")}
 function startChat(){if(!user){auth();return}hideAll();$("chat").style.display="block";$("composer").classList.remove("hidden");history=[];$("chat").innerHTML=""}
 function add(t,w){let d=document.createElement("div");d.className="msg "+w;let b=document.createElement("div");b.className="bubble";b.textContent=t;d.appendChild(b);$("chat").appendChild(d);window.scrollTo(0,document.body.scrollHeight);return b}
-async function send(){let t=$("input").value.trim();if(!t)return;$("input").value="";add(t,"user");history.push({role:"user",content:t});let b=add("Luna düşünüyor…","assistant");try{let r=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:history,mode})});let j=await r.json();if(!r.ok)throw Error(j.error);b.textContent=j.text;history.push({role:"assistant",content:j.text})}catch(e){b.textContent=e.message||"Bağlantı hatası."}}
+async function send(){
+  let t=$("input").value.trim();
+  if(!t)return;
+
+  $("input").value="";
+  add(t,"user");
+  history.push({role:"user",content:t});
+
+  let b=add("Luna düşünüyor…","assistant");
+
+  try{
+    let r=await fetch("/api/chat",{
+      method:"POST",
+      headers:{
+        "Content-Type":"application/json"
+      },
+      credentials:"include",
+      body:JSON.stringify({
+        messages:history,
+        mode:mode
+      })
+    });
+
+    const raw=await r.text();
+
+    console.log("Luna API HTTP:",r.status);
+    console.log("Luna API cevabı:",raw);
+
+    let j;
+
+    try{
+      j=raw ? JSON.parse(raw) : null;
+    }catch(parseError){
+      throw new Error(
+        "Sunucu geçerli JSON göndermedi. HTTP "+r.status+
+        " | Cevap: "+(raw||"(boş)")
+      );
+    }
+
+    if(!r.ok){
+      throw new Error(
+        j?.error ||
+        j?.message ||
+        "Sunucu hatası: HTTP "+r.status
+      );
+    }
+
+    if(!j || typeof j.text !== "string"){
+      throw new Error(
+        "Sunucudan cevap geldi fakat Luna mesajı bulunamadı."
+      );
+    }
+
+    b.textContent=j.text;
+    history.push({
+      role:"assistant",
+      content:j.text
+    });
+
+  }catch(e){
+    console.error("Luna chat hatası:",e);
+    b.textContent=e.message || "Bağlantı hatası.";
+  }
+}
 function key(e){if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send()}}
 async function account(){hideAll();$("account").style.display="block";let r=await fetch("/api/memories");let j=await r.json();$("planInfo").textContent="Plan: "+user.plan.toUpperCase();$("memories").innerHTML=(j.memories||[]).map(m=>`<div class="memory"><span>${m.content}</span><button class="btn" onclick="delMem(${m.id})">×</button></div>`).join("")||'<span class="small">Henüz hafıza yok.</span>'}
 async function saveMemory(){let c=$("memoryInput").value.trim();if(!c)return;await fetch("/api/memories",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({content:c})});$("memoryInput").value="";account()}
